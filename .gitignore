@@ -1,0 +1,11 @@
+/target
+**/*.log
+*.lock
+*.tmp
+*.bak
+.DS_Store
+.idea
+.vscode
+*.exe
+*.zip
+/dist

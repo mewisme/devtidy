@@ -1,0 +1,197 @@
+name: Build and Package
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-version:
+    name: Check Version and Create Tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      tag_exists: ${{ steps.check-tag.outputs.tag_exists }}
+      should_release: ${{ steps.check-release.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Get version from Cargo.toml
+        id: get-version
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | head -n 1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+      - name: Check if tag exists
+        id: check-tag
+        run: |
+          VERSION="${{ steps.get-version.outputs.version }}"
+          if git ls-remote --tags origin | grep -q "refs/tags/v$VERSION"; then
+            echo "tag_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "tag_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check if release exists
+        id: check-release
+        run: |
+          VERSION="${{ steps.get-version.outputs.version }}"
+          RELEASE_EXISTS=$(curl -s -o /dev/null -w "%{http_code}" https://api.github.com/repos/${{ github.repository }}/releases/tags/v$VERSION)
+          echo "should_release=true" >> $GITHUB_OUTPUT
+          if [[ "$RELEASE_EXISTS" == "200" ]]; then
+            RELEASE_ID=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/tags/v$VERSION | jq -r .id)
+            if [[ "$RELEASE_ID" != "null" ]]; then
+              curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                https://api.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID
+            fi
+          fi
+
+      - name: Create and push tag
+        if: steps.check-tag.outputs.tag_exists == 'false'
+        run: |
+          VERSION="${{ steps.get-version.outputs.version }}"
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "v$VERSION"
+
+  build:
+    name: Build ${{ matrix.os }}
+    needs: check-version
+    if: ${{ needs.check-version.outputs.should_release == 'true' || startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+            artifact_name: dd-windows-x86
+            binary_path: target/i686-pc-windows-msvc/release/dd.exe
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: dd-windows-x86_64
+            binary_path: target/x86_64-pc-windows-msvc/release/dd.exe
+
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: dd-linux-x86_64
+            binary_path: target/x86_64-unknown-linux-gnu/release/dd
+
+          - os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+            artifact_name: dd-linux-x86
+            binary_path: target/i686-unknown-linux-gnu/release/dd
+
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: dd-macos-x86_64
+            binary_path: target/x86_64-apple-darwin/release/dd
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib pkg-config libssl-dev
+          if [[ "${{ matrix.target }}" == "i686-unknown-linux-gnu" ]]; then
+            sudo dpkg --add-architecture i386
+            sudo apt-get update
+            sudo apt-get install -y libssl-dev:i386
+          elif [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          fi
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare package directory
+        shell: bash
+        run: |
+          mkdir -p package
+          # Copy binary with correct extension and location
+          cp ${{ matrix.binary_path }} package/
+
+          # Copy documentation and examples
+          cp README.md LICENSE package/
+
+      - name: Create ZIP archive
+        shell: bash
+        run: |
+          cd package
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            7z a -tzip ../${{ matrix.artifact_name }} *
+          else
+            zip -r ../${{ matrix.artifact_name }} *
+          fi
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.zip
+
+  release:
+    name: Create Release
+    needs: [check-version, build]
+    if: ${{ needs.check-version.outputs.should_release == 'true' || startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get commit info
+        id: commit-info
+        run: |
+          if [[ "${{ startsWith(github.ref, 'refs/tags/') }}" == "true" ]]; then
+            TAG_COMMIT=$(git rev-list -n 1 ${{ github.ref_name }})
+            COMMIT_MSG=$(git log -1 --pretty=%s $TAG_COMMIT)
+            COMMIT_DESC=$(git log -1 --pretty=%b $TAG_COMMIT)
+          else
+            COMMIT_MSG=$(git log -1 --pretty=%s)
+            COMMIT_DESC=$(git log -1 --pretty=%b)
+          fi
+
+          echo "message_raw<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMIT_MSG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "description_raw<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMIT_DESC" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dd-*/*
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', needs.check-version.outputs.version) }}
+          name: ${{ steps.commit-info.outputs.message_raw }}
+          body: ${{ steps.commit-info.outputs.description_raw }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
