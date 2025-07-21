@@ -92,11 +92,6 @@ jobs:
             artifact_name: dd-linux-x86_64
             binary_path: target/x86_64-unknown-linux-gnu/release/dd
 
-          - os: ubuntu-latest
-            target: i686-unknown-linux-gnu
-            artifact_name: dd-linux-x86
-            binary_path: target/i686-unknown-linux-gnu/release/dd
-
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: dd-macos-x86_64

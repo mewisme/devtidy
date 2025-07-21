@@ -23,7 +23,7 @@ mod colors {
 const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 pub fn draw(f: &mut Frame, app: &App) {
-  let area = f.size();
+  let area = f.area();
   f.render_widget(
     Block::default().style(Style::default().bg(colors::BACKGROUND)),
     area,
@@ -290,7 +290,7 @@ fn draw_cleaning_view(f: &mut Frame, app: &App, area: Rect) {
     let status = Paragraph::new(format!("Processing: {}", item))
       .style(Style::default().fg(colors::TEXT_DIM))
       .alignment(Alignment::Left);
-    let status_area = chunks[1].inner(&Margin {
+    let status_area = chunks[1].inner(Margin {
       vertical: 2,
       horizontal: 0,
     });
