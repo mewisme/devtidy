@@ -1,4 +1,4 @@
-use crate::models::{App, AppState};
+use crate::core::models::{App, AppState};
 use ratatui::prelude::*;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -465,8 +465,11 @@ fn draw_help_view(f: &mut Frame, app: &App, area: Rect) {
         .add_modifier(Modifier::BOLD),
     )),
     Line::from(vec![
-      Span::styled("  dd [DIRECTORY]", Style::default().fg(colors::PRIMARY)),
-      Span::raw(" - Scan the specified directory (default: current directory)"),
+      Span::styled(
+        "  dd -p, --path /your/directory/path",
+        Style::default().fg(colors::PRIMARY),
+      ),
+      Span::raw(" - Scan the specified directory (default: current working directory)"),
     ]),
     Line::from(vec![
       Span::styled("  dd --gitignore", Style::default().fg(colors::PRIMARY)),
@@ -486,6 +489,36 @@ fn draw_help_view(f: &mut Frame, app: &App, area: Rect) {
     Line::from(vec![
       Span::styled("  dd -i, --install", Style::default().fg(colors::PRIMARY)),
       Span::raw(" - Install devtidy globally"),
+    ]),
+    Line::from(""),
+    Line::from(Span::styled(
+      "AI Commands:",
+      Style::default()
+        .fg(colors::INFO)
+        .add_modifier(Modifier::BOLD),
+    )),
+    Line::from(vec![
+      Span::styled(
+        "  dd ai-explain [path]",
+        Style::default().fg(colors::PRIMARY),
+      ),
+      Span::raw(" - Explain what a folder is used for using AI"),
+    ]),
+    Line::from(vec![
+      Span::styled("  dd ai-suggest", Style::default().fg(colors::PRIMARY)),
+      Span::raw(" - Get AI suggestions for cleaning the current project"),
+    ]),
+    Line::from(vec![
+      Span::styled("  dd ai-chat", Style::default().fg(colors::PRIMARY)),
+      Span::raw(" - Start an interactive AI chat for cleaning advice"),
+    ]),
+    Line::from(vec![
+      Span::styled("  dd ai-diagnose", Style::default().fg(colors::PRIMARY)),
+      Span::raw(" - Run AI system diagnostics and troubleshooting"),
+    ]),
+    Line::from(vec![
+      Span::styled("  dd ai-test-context", Style::default().fg(colors::PRIMARY)),
+      Span::raw(" - Test AI context functionality (debug)"),
     ]),
   ];
 

@@ -1,4 +1,4 @@
-use crate::models::CleanableItem;
+use crate::core::models::CleanableItem;
 use std::fs;
 use std::sync::{Arc, Mutex};
 

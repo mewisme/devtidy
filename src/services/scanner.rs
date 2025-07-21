@@ -1,5 +1,5 @@
-use crate::constants::CLEANABLE_PATTERNS;
-use crate::models::CleanableItem;
+use crate::core::constants::CLEANABLE_PATTERNS;
+use crate::core::models::CleanableItem;
 use ignore::WalkBuilder;
 use std::collections::HashSet;
 use std::fs::File;

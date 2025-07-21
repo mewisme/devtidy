@@ -1,12 +1,10 @@
-mod app;
-mod cleaner;
-mod constants;
-mod models;
-mod scanner;
+mod ai;
+mod core;
+mod services;
 mod ui;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use crossterm::{
   event, execute,
   terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -16,19 +14,22 @@ use std::io;
 
 /// DevTidy - Clean development artifacts from your projects
 #[derive(Parser, Debug)]
-#[clap(version = constants::VERSION, about, long_about = None)]
+#[clap(version = core::constants::VERSION, about, long_about = None)]
 #[clap(disable_version_flag = true)]
 struct Args {
-  /// Target directory to scan (defaults to current directory)
-  #[clap(value_parser)]
-  directory: Option<String>,
+  #[clap(subcommand)]
+  command: Option<Commands>,
+
+  /// Target directory to scan (defaults to current working directory)
+  #[clap(short = 'p', long, value_parser, global = true)]
+  path: Option<String>,
 
   /// Scan files matching .gitignore patterns
-  #[clap(long)]
+  #[clap(long, global = true)]
   gitignore: bool,
 
   /// Maximum depth for directory scanning (default: 6)
-  #[clap(short, long, default_value = "6")]
+  #[clap(short, long, default_value = "6", global = true)]
   depth: usize,
 
   /// Show version information
@@ -38,6 +39,27 @@ struct Args {
   /// Install devtidy globally
   #[clap(short, long)]
   install: bool,
+
+  /// Show help information
+  #[clap(short, long)]
+  help: bool,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+  /// Explain what a folder is used for using AI
+  AiExplain {
+    /// Path to the folder to explain (defaults to current directory)
+    path: Option<String>,
+  },
+  /// Get AI suggestions for cleaning the current project
+  AiSuggest,
+  /// Start an interactive AI chat for cleaning advice
+  AiChat,
+  /// Run AI system diagnostics
+  AiDiagnose,
+  /// Test AI context functionality (debug)
+  AiTestContext,
 }
 
 async fn run() -> Result<()> {
@@ -48,7 +70,7 @@ async fn run() -> Result<()> {
   let args = Args::parse();
 
   if args.version {
-    println!("devtidy {}", constants::VERSION);
+    println!("DevTidy v{}", core::constants::VERSION);
     println!(
       "Built with Rust {} ({}/{})",
       rustc_version_runtime::version(),
@@ -56,6 +78,55 @@ async fn run() -> Result<()> {
       std::env::consts::ARCH
     );
     return Ok(());
+  }
+
+  if args.help {
+    println!("DevTidy - Clean development artifacts from your projects");
+    println!();
+    println!("USAGE:");
+    println!("  dd [OPTIONS] [COMMAND]");
+    println!();
+    println!("OPTIONS:");
+    println!("  -p, --path <PATH>          Target directory to scan (defaults to current working directory)");
+    println!("  --gitignore                Scan files matching .gitignore patterns");
+    println!("  -d, --depth <DEPTH>        Maximum depth for directory scanning (default: 6)");
+    println!("  -v, --version              Show version information");
+    println!("  -i, --install              Install devtidy globally");
+    println!("  -h, --help                 Show help information");
+    println!();
+    println!("COMMANDS:");
+    println!("  ai-explain <PATH>          Explain what a folder is used for using AI");
+    println!("  ai-suggest                 Get AI suggestions for cleaning the current project");
+    println!("  ai-chat                    Start an interactive AI chat for cleaning advice");
+    println!();
+    println!("EXAMPLES:");
+    println!("  dd                         Scan current directory");
+    println!("  dd -p /path/to/project     Scan specific directory");
+    println!("  dd --gitignore             Scan with .gitignore patterns");
+    println!("  dd ai-explain              Explain current directory with AI");
+    println!("  dd ai-suggest              Get AI cleaning suggestions");
+    return Ok(());
+  }
+
+  // Handle AI subcommands
+  if let Some(command) = args.command {
+    match command {
+      Commands::AiExplain { path } => {
+        return ai::handle_ai_explain(path).await;
+      }
+      Commands::AiSuggest => {
+        return ai::handle_ai_suggest().await;
+      }
+      Commands::AiChat => {
+        return ai::handle_ai_chat().await;
+      }
+      Commands::AiDiagnose => {
+        return ai::handle_ai_diagnose().await;
+      }
+      Commands::AiTestContext => {
+        return ai::handle_ai_test_context().await;
+      }
+    }
   }
 
   if args.install {
@@ -70,7 +141,24 @@ async fn run() -> Result<()> {
       .file_name()
       .ok_or_else(|| anyhow::anyhow!("Executable has no filename"))?;
     let target_path = install_dir.join(exe_name);
+
+    // Remove existing installation if it exists
+    if target_path.exists() {
+      fs::remove_file(&target_path)?;
+      println!("Removed existing installation: {}", target_path.display());
+    }
+
+    // Copy new version
     fs::copy(&current_exe, &target_path)?;
+
+    // Make executable on Unix-like systems
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      let mut perms = fs::metadata(&target_path)?.permissions();
+      perms.set_mode(0o755);
+      fs::set_permissions(&target_path, perms)?;
+    }
 
     println!("Installed to: {}", target_path.display());
 
@@ -152,7 +240,7 @@ async fn run() -> Result<()> {
     return Ok(());
   }
 
-  let mut app = match app::initialize_app(args.directory, args.gitignore, args.depth) {
+  let mut app = match core::app::initialize_app(args.path, args.gitignore, args.depth) {
     Ok(app) => app,
     Err(err) => {
       eprintln!("Error: {}", err);
@@ -167,7 +255,7 @@ async fn run() -> Result<()> {
   let mut terminal = Terminal::new(backend)?;
   terminal.clear()?;
 
-  let app_result = app::run_app(&mut app, &mut terminal).await;
+  let app_result = core::app::run_app(&mut app, &mut terminal).await;
 
   disable_raw_mode()?;
   execute!(

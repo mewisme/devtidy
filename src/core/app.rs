@@ -1,7 +1,7 @@
-use crate::cleaner::clean_selected_items;
-use crate::models::{App, AppState, CleanableItem};
-use crate::scanner::{calculate_directory_sizes, scan_directory};
-use crate::ui;
+use crate::core::models::{App, AppState, CleanableItem};
+use crate::services::cleaner::clean_selected_items;
+use crate::services::scanner::{calculate_directory_sizes, scan_directory};
+use crate::ui::ui as ui_module;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseEventKind};
 use std::path::PathBuf;
@@ -16,7 +16,7 @@ pub async fn run_app(
   app.scanning = true;
   app.scan_start_time = Instant::now();
 
-  terminal.draw(|f| ui::draw(f, app))?;
+  terminal.draw(|f| ui_module::draw(f, app))?;
 
   let (scan_tx, mut scan_rx) = mpsc::channel::<ScanUpdate>(32);
 
@@ -39,7 +39,7 @@ pub async fn run_app(
       process_scan_update(app, update);
     }
 
-    terminal.draw(|f| ui::draw(f, app))?;
+    terminal.draw(|f| ui_module::draw(f, app))?;
 
     if event::poll(Duration::from_millis(16))? {
       match event::read()? {
@@ -341,6 +341,9 @@ pub fn initialize_app(
   use_gitignore: bool,
   max_depth: usize,
 ) -> Result<App> {
+  // Determine the base directory using the following priority:
+  // 1. User provided path (--path/-p argument)
+  // 2. Current working directory
   let dir = match target_dir {
     Some(path) => {
       let path = PathBuf::from(path);
