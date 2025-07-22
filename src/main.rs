@@ -2,6 +2,7 @@ mod ai;
 mod core;
 mod services;
 mod ui;
+mod utils;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -96,15 +97,19 @@ async fn run() -> Result<()> {
     println!();
     println!("COMMANDS:");
     println!("  ai-explain <PATH>          Explain what a folder is used for using AI");
-    println!("  ai-suggest                 Get AI suggestions for cleaning the current project");
+    println!("  ai-suggest [PATH]          Get AI suggestions for cleaning (file/folder or current directory)");
     println!("  ai-chat                    Start an interactive AI chat for cleaning advice");
+    println!("  ai-diagnose                Run AI system diagnostics");
+    println!("  ai-test-context            Test AI context functionality (debug)");
     println!();
     println!("EXAMPLES:");
     println!("  dd                         Scan current directory");
     println!("  dd -p /path/to/project     Scan specific directory");
     println!("  dd --gitignore             Scan with .gitignore patterns");
     println!("  dd ai-explain              Explain current directory with AI");
-    println!("  dd ai-suggest              Get AI cleaning suggestions");
+    println!("  dd ai-explain node_modules Explain specific folder with AI");
+    println!("  dd ai-suggest              Get AI cleaning suggestions for current directory");
+    println!("  dd ai-suggest package-lock.json Get AI suggestion for specific file");
     return Ok(());
   }
 

@@ -105,19 +105,6 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross-compilation tools (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-multilib g++-multilib pkg-config libssl-dev
-          if [[ "${{ matrix.target }}" == "i686-unknown-linux-gnu" ]]; then
-            sudo dpkg --add-architecture i386
-            sudo apt-get update
-            sudo apt-get install -y libssl-dev:i386
-          elif [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
-            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          fi
-
       - name: Build binary
         run: cargo build --release --target ${{ matrix.target }}
 

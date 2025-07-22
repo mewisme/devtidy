@@ -3,7 +3,7 @@ use crate::services::cleaner::clean_selected_items;
 use crate::services::scanner::{calculate_directory_sizes, scan_directory};
 use crate::ui::ui as ui_module;
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -12,6 +12,8 @@ pub async fn run_app(
   app: &mut App,
   terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
 ) -> Result<()> {
+  use crossterm::{event::*, execute};
+
   app.state = AppState::Scanning;
   app.scanning = true;
   app.scan_start_time = Instant::now();
@@ -19,11 +21,12 @@ pub async fn run_app(
   terminal.draw(|f| ui_module::draw(f, app))?;
 
   let (scan_tx, mut scan_rx) = mpsc::channel::<ScanUpdate>(32);
+  let scan_tx_clone = scan_tx.clone();
 
-  let _scan_task = tokio::spawn(scan_background(
+  tokio::spawn(scan_background(
     app.current_dir.clone(),
     app.use_gitignore,
-    scan_tx.clone(),
+    scan_tx_clone.clone(),
     app.scan_start_time,
     app.max_depth,
   ));
@@ -32,7 +35,7 @@ pub async fn run_app(
   let mut last_key_code = None;
   let key_debounce = Duration::from_millis(150);
 
-  crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)?;
+  execute!(std::io::stdout(), EnableMouseCapture)?;
 
   loop {
     if let Ok(update) = scan_rx.try_recv() {
@@ -41,44 +44,63 @@ pub async fn run_app(
 
     terminal.draw(|f| ui_module::draw(f, app))?;
 
-    if event::poll(Duration::from_millis(16))? {
-      match event::read()? {
+    if poll(Duration::from_millis(16))? {
+      match read()? {
         Event::Key(key) => {
           let now = Instant::now();
           let is_same_key = last_key_code == Some(key.code);
           if now.duration_since(last_key_time) >= key_debounce || !is_same_key {
             last_key_time = now;
             last_key_code = Some(key.code);
-            if !handle_key_event(app, key).await? {
+
+            if key.code == KeyCode::Char('r') && app.state == AppState::Selecting && !app.cleaning {
+              app.state = AppState::Scanning;
+              app.scanning = true;
+              app.scan_start_time = Instant::now();
+              app.scan_duration = Duration::ZERO;
+              app.scanned_items = 0;
+              app.calculating_sizes = false;
+              app.pending_sizes.clear();
+              app.total_size_jobs = 0;
+              app.completed_size_jobs = 0;
+              app.progress = 0.0;
+              app.processing_item = None;
+              app.items.clear();
+              app.list_state.select(None);
+              app.total_size = 0;
+              app.cleaned_size = 0;
+
+              tokio::spawn(scan_background(
+                app.current_dir.clone(),
+                app.use_gitignore,
+                scan_tx_clone.clone(),
+                app.scan_start_time,
+                app.max_depth,
+              ));
+            } else if !handle_key_event(app, key).await? {
               break;
             }
           }
         }
-        Event::Mouse(mouse) => {
-          if app.state == AppState::Selecting {
-            match mouse.kind {
-              MouseEventKind::ScrollDown => {
-                app.next();
+
+        Event::Mouse(mouse) => match app.state {
+          AppState::Selecting => match mouse.kind {
+            MouseEventKind::ScrollDown => app.next(),
+            MouseEventKind::ScrollUp => app.previous(),
+            _ => {}
+          },
+          AppState::Help => match mouse.kind {
+            MouseEventKind::ScrollDown => app.help_scroll += 1,
+            MouseEventKind::ScrollUp => {
+              if app.help_scroll > 0 {
+                app.help_scroll -= 1;
               }
-              MouseEventKind::ScrollUp => {
-                app.previous();
-              }
-              _ => {}
             }
-          } else if app.state == AppState::Help {
-            match mouse.kind {
-              MouseEventKind::ScrollDown => {
-                app.help_scroll += 1;
-              }
-              MouseEventKind::ScrollUp => {
-                if app.help_scroll > 0 {
-                  app.help_scroll -= 1;
-                }
-              }
-              _ => {}
-            }
-          }
-        }
+            _ => {}
+          },
+          _ => {}
+        },
+
         _ => {}
       }
     }
@@ -86,7 +108,7 @@ pub async fn run_app(
     tokio::time::sleep(Duration::from_millis(10)).await;
   }
 
-  let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
+  let _ = execute!(std::io::stdout(), DisableMouseCapture);
 
   Ok(())
 }
@@ -341,9 +363,6 @@ pub fn initialize_app(
   use_gitignore: bool,
   max_depth: usize,
 ) -> Result<App> {
-  // Determine the base directory using the following priority:
-  // 1. User provided path (--path/-p argument)
-  // 2. Current working directory
   let dir = match target_dir {
     Some(path) => {
       let path = PathBuf::from(path);

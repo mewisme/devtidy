@@ -1,4 +1,4 @@
-use crate::core::models::{App, AppState};
+use crate::core::models::{App, AppState, CleanableItem};
 use ratatui::prelude::*;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -125,16 +125,6 @@ fn draw_scanning_view(f: &mut Frame, app: &App, area: Rect) {
       "Scan time: {:?}\nItems found: {}\nSizes calculated: {}/{} ({:.1}%)",
       app.scan_duration, app.scanned_items, app.completed_size_jobs, app.total_size_jobs, percent
     ));
-
-    let gauge = Gauge::default()
-      .block(
-        Block::default()
-          .title("Calculating")
-          .border_style(Style::default().fg(colors::PRIMARY)),
-      )
-      .gauge_style(Style::default().fg(colors::INFO).bg(Color::Black))
-      .percent((percent as u16).min(100));
-    f.render_widget(gauge, chunks[3]);
   } else {
     let elapsed = app.scan_start_time.elapsed();
     info_text.push_str(&format!(
@@ -163,30 +153,33 @@ fn draw_selecting_view(f: &mut Frame, app: &App, area: Rect) {
     .constraints([Constraint::Min(5), Constraint::Length(3)])
     .split(area);
 
+  fn generate_style(item: &CleanableItem, line: i8) -> Style {
+    if item.selected {
+      Style::default().fg(colors::SUCCESS)
+    } else {
+      Style::default().fg(if line == 1 {
+        colors::TEXT
+      } else {
+        colors::TEXT_DIM
+      })
+    }
+  }
+
   let items: Vec<ListItem> = app
     .items
     .iter()
-    .enumerate()
-    .map(|(_index, item)| {
+    .map(|item| {
       let prefix = if item.selected { "✓ " } else { "" };
-      let first_line = format!(
-        "{}{} ({})",
-        prefix,
-        item.path.display(),
-        item.display_size()
-      );
+      let first_line = format!("{}{}", prefix, item.path.display());
+      let second_line = format!("└── {} - {}", item.display_info(), item.display_size());
 
-      let second_line = format!("└── {}", item.display_info());
+      let text = Text::from(vec![
+        Line::from(Span::styled(first_line, generate_style(item, 1))),
+        Line::from(Span::styled(second_line, generate_style(item, 2))),
+        Line::from(Span::raw("")),
+      ]);
 
-      let display_text = format!("{}\n{}", first_line, second_line);
-
-      let style = if item.selected {
-        Style::default().fg(colors::SUCCESS)
-      } else {
-        Style::default().fg(colors::TEXT)
-      };
-
-      ListItem::new(display_text).style(style)
+      ListItem::new(text)
     })
     .collect();
 
@@ -259,7 +252,7 @@ fn draw_selecting_view(f: &mut Frame, app: &App, area: Rect) {
           .border_style(Style::default().fg(border_color)),
       )
       .style(Style::default().fg(colors::TEXT))
-      .alignment(Alignment::Left);
+      .alignment(Alignment::Center);
     f.render_widget(status, chunks[1]);
   }
 }
@@ -386,6 +379,10 @@ fn draw_help_view(f: &mut Frame, app: &App, area: Rect) {
     Line::from(vec![
       Span::styled("  c     ", Style::default().fg(colors::PRIMARY)),
       Span::raw("Clean selected items"),
+    ]),
+    Line::from(vec![
+      Span::styled("  r     ", Style::default().fg(colors::PRIMARY)),
+      Span::raw("Rescan directory for items"),
     ]),
     Line::from(vec![
       Span::styled("  j/↓   ", Style::default().fg(colors::PRIMARY)),
@@ -579,14 +576,31 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
   let footer_block = Block::default().style(Style::default().bg(colors::BACKGROUND));
   f.render_widget(footer_block, area);
 
-  let footer_chunks = Layout::default()
-    .direction(Direction::Horizontal)
-    .constraints([Constraint::Percentage(60), Constraint::Percentage(40)].as_ref())
+  let vertical_chunks = Layout::default()
+    .direction(Direction::Vertical)
+    .constraints(
+      [
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+      ]
+      .as_ref(),
+    )
     .split(area);
+
+  let top_chunks = Layout::default()
+    .direction(Direction::Horizontal)
+    .constraints(match app.state {
+      AppState::Selecting => vec![Constraint::Percentage(100)],
+      _ => vec![Constraint::Percentage(60), Constraint::Percentage(40)],
+    })
+    .split(vertical_chunks[0]);
 
   let footer_text = match app.state {
     AppState::Scanning => "",
-    AppState::Selecting => "↑/↓: navigate | Space: select | c: clean | q: quit | h: help",
+    AppState::Selecting => {
+      "↑/↓: navigate | Space: select | c: clean | r: rescan | q: quit | h: help"
+    }
     AppState::Cleaning => "q: quit",
     AppState::Complete => "any key: return | q: quit",
     AppState::Help => "↑/↓/Mouse: scroll | PageUp/Down: fast scroll | h/Esc: back",
@@ -594,26 +608,41 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
 
   let footer = Paragraph::new(footer_text)
     .style(Style::default().fg(colors::TEXT_DIM))
-    .alignment(Alignment::Left);
+    .alignment(match app.state {
+      AppState::Selecting => Alignment::Center,
+      _ => Alignment::Left,
+    });
 
-  f.render_widget(footer, footer_chunks[0]);
+  f.render_widget(footer, top_chunks[0]);
 
-  let status_text = match app.state {
-    AppState::Scanning => "Scanning for items...".to_string(),
-    AppState::Selecting => "".to_string(),
-    AppState::Cleaning => "Cleaning selected items...".to_string(),
-    AppState::Complete => format!("Cleaned {} items", app.cleaned_size),
-    AppState::Help => {
-      if app.help_scroll > 0 {
-        "Scroll to see more ↓".to_string()
-      } else {
-        "Help".to_string()
+  if top_chunks.len() > 1 {
+    let status_text = match app.state {
+      AppState::Scanning => "Scanning for items...".to_string(),
+      AppState::Cleaning => "Cleaning selected items...".to_string(),
+      AppState::Complete => format!(
+        "Total space cleaned: {}",
+        human_bytes::human_bytes(app.cleaned_size as f64)
+      ),
+      AppState::Help => {
+        if app.help_scroll > 0 {
+          "Scroll to see more ↓".to_string()
+        } else {
+          "Help".to_string()
+        }
       }
-    }
-  };
+      _ => String::new(),
+    };
 
-  let footer_help = Paragraph::new(status_text)
+    let footer_help = Paragraph::new(status_text)
+      .style(Style::default().fg(colors::TEXT_DIM))
+      .alignment(Alignment::Right);
+
+    f.render_widget(footer_help, top_chunks[1]);
+  }
+
+  let credit = Paragraph::new("Made by Mew with 💖")
     .style(Style::default().fg(colors::TEXT_DIM))
-    .alignment(Alignment::Right);
-  f.render_widget(footer_help, footer_chunks[1]);
+    .alignment(Alignment::Center);
+
+  f.render_widget(credit, vertical_chunks[2]);
 }
